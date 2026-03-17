@@ -16,7 +16,7 @@ Inside this box you'll find:
 
 ## What's inside the cube
 
-![Overview of all components](/img/Instructions-overview.png)
+![Overview of all components](/img/instructions-overview.png)
 
 The cube consists of several layers assembled from front to back:
 
@@ -28,7 +28,7 @@ The cube consists of several layers assembled from front to back:
 
 If you ever have to remove/place the inner frames, pay attention to the numbers on the side for correct placement:
 
-![Overview of all components](/img/Instructions-modules.png)
+![Overview of all components](/img/instructions-modules.png)
 
 
 ---
