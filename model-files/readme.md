@@ -91,7 +91,7 @@ The four small light-diffusion cubes that sit inside each compartment and scatte
 
 These cubes are printed in **vase mode** (single continuous spiral wall, no top/bottom layers) to maximise translucency and light diffusion.
 
-- **Material:** Translucent PLA — Mellow Yellow
+- **Material:** Bambu Labs Translucent PLA — Mellow Yellow
 - **Print sequence:** By object (sequential) — required for vase mode with multiple objects on one plate
 - **Nozzle:** 0.8 mm recommended for a thicker, more even wall and better light diffusion
 - **Plate:** Print 3 cubes first, then send a second print for cube #4
