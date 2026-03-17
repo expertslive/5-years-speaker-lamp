@@ -128,6 +128,8 @@ Once connected, open a browser and go to:
 
 You will see the WLED interface with the custom Experts Live Netherlands background.
 
+![WLED dashboard](/img/wled-dashboard.png)
+
 ### Using the WLED app (optional)
 
 WLED has a free mobile app that makes it easy to control the cube from your phone. Search for **"WLED"** in the App Store or Google Play. When you open the app on the same Wi-Fi network, it will automatically discover the cube.
