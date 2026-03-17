@@ -39,7 +39,7 @@ If you ever have to remove/place the inner frames, pay attention to the numbers 
 
 The back cover is secured by four **quarter-turn twist-lock screws** in the corners.
 
-![Back cover with twist-lock screws](/img/Instructions-01.png)
+![Back cover with twist-lock screws](/img/instructions-01.png)
 
 To open, insert the **connector end of the supplied USB-C cable** into each corner screw and rotate **in the opposite direction of the arrow**. Once all four screws are turned, the back panel will come free.
 
@@ -47,7 +47,7 @@ To open, insert the **connector end of the supplied USB-C cable** into each corn
 
 ### Step 2 — Pull out the electronics board
 
-![ESP circuit board in housing](/img/Instructions-02.png)
+![ESP circuit board in housing](/img/instructions-02.png)
 
 Gently pull the **WLED circuit board** out from its slot inside the housing. You only need to move it aside — **do not disconnect the LED strip connector** unless absolutely necessary.
 
@@ -63,7 +63,7 @@ Gently pull the **WLED circuit board** out from its slot inside the housing. You
 
 ### Step 3 — Remove the white back panel
 
-![White back panel removed](/img/Instructions-03.png)
+![White back panel removed](/img/instructions-03.png)
 
 Lift out the **white cover plate** to expose the four openings for the crystal cubes inside the housing.
 
@@ -71,7 +71,7 @@ Lift out the **white cover plate** to expose the four openings for the crystal c
 
 ### Step 4 — Place your crystal cubes
 
-![Placing a crystal cube](/img/Instructions-04.png)
+![Placing a crystal cube](/img/instructions-04.png)
 
 Drop each of your four crystal speaker cubes into their compartment.
 
@@ -81,7 +81,7 @@ Each cube slides straight in and sits snugly in its slot. No forcing needed.
 
 ### Step 5 — Replace the white panel and reseat the board
 
-![Reseating the white panel and circuit board](/img/Instructions-05.png)
+![Reseating the white panel and circuit board](/img/instructions-05.png)
 
 Place the **white cover plate** back in position over the crystal cubes, then slide the **circuit board** back into its slot in the housing. Make sure the USB-C port aligns with the opening on the side of the back cover.
 
@@ -89,7 +89,7 @@ Place the **white cover plate** back in position over the crystal cubes, then sl
 
 ### Step 6 — Close and lock the back cover
 
-![Locking the back cover](/img/Instructions-07.png)
+![Locking the back cover](/img/instructions-07.png)
 
 Slide the back cover panel onto the housing and **lock all four corners in the direction of the arrows** using the USB-C connector. The arrows on the cover show the locked direction.
 
@@ -103,7 +103,7 @@ The cube is now fully assembled and ready to power on.
 
 Connect a USB-C power cable (5V, at least 1A — a standard phone charger works perfectly) to the **USB-C port on the side** of the back panel.
 
-![USB-C port location](/img/Instructions-06.png)
+![USB-C port location](/img/instructions-06.png)
 
 The cube will power on automatically. After a few seconds, the lights will start and the built-in show will begin — cycling through all the preset lighting effects.
 
@@ -175,7 +175,7 @@ You don't need to do anything — just plug it in and enjoy the show.
 
 If you want to set one preset as default, you can select the preset als make sure `Apply at boot` is selected before you click `Save`.
 
-![Setting a preset](/img/Instructions-08.png)
+![Setting a preset](/img/instructions-08.png)
 
 ---
 
