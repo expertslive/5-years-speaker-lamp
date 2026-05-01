@@ -2,13 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a USB-only flashing workflow (`flash.sh`) that takes a blank ESP8266 to a fully configured WLED device in a single command, so 32 Experts Live speaker-lamp boards can be provisioned in one sitting.
+**Goal:** Build a USB-only flashing workflow (`flash.sh`) that takes a blank ESP8266 to a fully configured WLED device in a single command, so multiple Experts Live speaker-lamp boards can be provisioned in one sitting.
 
-**Architecture:** Two bash scripts in `tools/mass-flash/`. `build-fs.sh` runs once to download the WLED firmware binary and build a LittleFS filesystem image from the JSON files in `wled/`. `flash.sh` runs once per board: auto-detects the USB-serial port, runs `esptool.py write_flash` with firmware + filesystem, and reads serial for ~5s to confirm boot. The device comes up fully configured on the target WLAN with the correct boot playlist, LED map, and UI background — no web UI steps, no AP-switching.
+**Architecture:** Two bash scripts in `tools/mass-flash/`. `build-fs.sh` runs once to download the WLED firmware binary, generate `wsec.json` from environment variables, and build a LittleFS image from the JSON files in `wled/`. `flash.sh` runs once per board: auto-detects the USB-serial port, runs `esptool write-flash` with firmware + filesystem, reads the board MAC, and discovers the DHCP IP via ARP. The device comes up fully configured on the target WLAN with the correct boot playlist and LED map — no web UI uploads or AP-switching.
 
-**Tech Stack:** bash, `esptool` (Python), `mklittlefs`, `curl` (firmware download), `jq` (JSON transformations). macOS host.
+**Tech Stack:** bash, `esptool` (Python), `littlefs-python`, `curl` (firmware download), `jq` (JSON transformations). macOS host.
 
 **Test strategy:** Bash tooling does not warrant unit-test infrastructure for a one-shot event. Each task ends with a **verification step** — run the script (or a fragment), inspect the output, confirm expectations. Phase 2 of the spec (one-board end-to-end test with real hardware) is the integration test.
+
+**Implementation outcome:** The final implementation uses `esptool`, `littlefs-python`, a 1,024,000-byte LittleFS image at `0x300000`, `wsec.json` generated from environment variables, and ARP/MAC IP discovery. The BG image cannot be baked because WLED 0.15 stores it in browser `localStorage`.
 
 ---
 
@@ -40,11 +42,13 @@ build/*
 ```markdown
 # WLED Mass-Flash Tool
 
-Flashes 32 ESP8266 boards with WLED + Experts Live 5 Years config in one USB step per board.
+Flashes multiple ESP8266 boards with WLED + Experts Live 5 Years config in one USB step per board.
 
 ## Prerequisites (one-time, macOS)
 
-    brew install esptool mklittlefs jq
+    brew install esptool jq
+
+`littlefs-python` is installed on demand by `build-fs.sh` via `python3 -m pip`.
 
 If your boards use a CH340 USB-serial chip (common on cheap clones), install the WCH driver from https://www.wch.cn/downloads/CH341SER_MAC_ZIP.html.
 
@@ -60,7 +64,7 @@ Downloads the WLED firmware and builds `build/littlefs.bin` with baked config.
 
 Plug in the ESP8266 via USB, run the command, wait ~45s, unplug.
 
-## Flash in a loop (for 32 boards)
+## Flash in a loop (for multiple boards)
 
     ./flash.sh --loop
 
@@ -108,10 +112,10 @@ require_cmd() {
   fi
 }
 
-require_cmd esptool.py "brew install esptool"
-require_cmd mklittlefs "brew install mklittlefs"
+require_cmd esptool "brew install esptool"
 require_cmd jq "brew install jq"
 require_cmd curl "already in macOS"
+require_cmd python3 "already in macOS"
 
 mkdir -p "$BUILD_DIR"
 
@@ -174,7 +178,7 @@ Expected: downloads the `.bin` file, prints size. File should be between ~500KB 
 - [ ] **Step 3: Verify it is a valid ESP8266 image**
 
 ```bash
-esptool.py --chip esp8266 image_info tools/mass-flash/build/WLED_0.15.0_ESP8266.bin
+esptool --chip esp8266 image-info tools/mass-flash/build/WLED_0.15.0_ESP8266.bin
 ```
 Expected: output shows ESP8266 image header, segments, entry point — no parse errors.
 
@@ -255,7 +259,7 @@ Expected: `false`.
 
 ```bash
 git add tools/mass-flash/build-fs.sh
-git commit -m "build-fs.sh: bake Wi-Fi psk into cfg"
+git commit -m "build-fs.sh: generate wsec from env credentials"
 ```
 
 ---
@@ -265,7 +269,7 @@ git commit -m "build-fs.sh: bake Wi-Fi psk into cfg"
 **Files:**
 - Modify: `tools/mass-flash/build-fs.sh`
 
-**LittleFS sizing rationale:** WLED ESP8266 stock builds reserve **256 KB** for LittleFS starting at flash offset `0x200000` (decimal 2097152). That is the partition we fill; its size passed to `mklittlefs` must match exactly so the filesystem lands in the right place when flashed at `0x200000`.
+**LittleFS sizing rationale:** WLED ESP8266 stock builds using the 4m1m layout reserve a **1,024,000 byte** LittleFS partition starting at flash offset `0x300000`. WLED 0.15 on ESP8266 uses LittleFS v2.0 with `name_max=32`, so the image is built with `littlefs-python` rather than `brew mklittlefs`.
 
 - [ ] **Step 1: Append LittleFS build block**
 
@@ -274,22 +278,44 @@ Add to `tools/mass-flash/build-fs.sh`:
 ```bash
 FS_STAGE="$BUILD_DIR/fs-stage"
 LITTLEFS_BIN="$BUILD_DIR/littlefs.bin"
-LITTLEFS_SIZE=262144        # 256 KB — matches WLED ESP8266 partition
-LITTLEFS_BLOCK=8192
-LITTLEFS_PAGE=256
 
 rm -rf "$FS_STAGE"
 mkdir -p "$FS_STAGE"
-cp "$BAKED_CFG" "$FS_STAGE/cfg.json"
+cp "$BAKED_CFG"  "$FS_STAGE/cfg.json"
+cp "$BAKED_WSEC" "$FS_STAGE/wsec.json"
 cp "$WLED_DIR/wled_presets_experts-live-5-years.json" "$FS_STAGE/presets.json"
 cp "$WLED_DIR/wled_ledmap.json" "$FS_STAGE/ledmap.json"
 
-mklittlefs \
-  -c "$FS_STAGE" \
-  -s "$LITTLEFS_SIZE" \
-  -b "$LITTLEFS_BLOCK" \
-  -p "$LITTLEFS_PAGE" \
-  "$LITTLEFS_BIN"
+python3 - "$FS_STAGE" "$LITTLEFS_BIN" <<'PY'
+import sys, os
+from littlefs import LittleFS, UserContext
+
+stage, out = sys.argv[1], sys.argv[2]
+BLOCK_SIZE, BLOCK_COUNT = 8192, 125
+
+ctx = UserContext(BLOCK_SIZE * BLOCK_COUNT)
+fs = LittleFS(
+    context=ctx,
+    block_size=BLOCK_SIZE,
+    block_count=BLOCK_COUNT,
+    name_max=32,
+    disk_version=0x00020000,
+    mount=False,
+)
+fs.format()
+fs.mount()
+
+for fname in sorted(os.listdir(stage)):
+    with open(os.path.join(stage, fname), 'rb') as r:
+        data = r.read()
+    with fs.open('/' + fname, 'wb') as w:
+        w.write(data)
+    print(f"  /{fname} ({len(data)} bytes)")
+
+fs.unmount()
+with open(out, 'wb') as f:
+    f.write(bytes(ctx.buffer))
+PY
 
 echo "Wrote $LITTLEFS_BIN ($(stat -f%z "$LITTLEFS_BIN") bytes)"
 ```
@@ -299,14 +325,20 @@ echo "Wrote $LITTLEFS_BIN ($(stat -f%z "$LITTLEFS_BIN") bytes)"
 ```bash
 ./tools/mass-flash/build-fs.sh
 ```
-Expected: prints size of `littlefs.bin`. File size should equal `262144` bytes.
+Expected: prints size of `littlefs.bin`. File size should equal `1024000` bytes.
 
 - [ ] **Step 3: Verify contents**
 
 ```bash
-mklittlefs -l -s 262144 -b 8192 -p 256 tools/mass-flash/build/littlefs.bin
+python3 - <<'PY'
+from littlefs import LittleFS, UserContext
+with open('tools/mass-flash/build/littlefs.bin', 'rb') as f:
+    ctx = UserContext(bytearray(f.read()))
+fs = LittleFS(context=ctx, block_size=8192, block_count=125, name_max=32, disk_version=0x00020000)
+print(fs.listdir('/'))
+PY
 ```
-Expected: lists `cfg.json`, `presets.json`, `ledmap.json` with non-zero sizes. Geometry flags are required on the brew build of mklittlefs — without them it defaults to 64 blocks and reports a spurious "Corrupted dir pair" on our 32-block image.
+Expected: lists `cfg.json`, `wsec.json`, `presets.json`, `ledmap.json` with non-zero sizes.
 
 - [ ] **Step 4: Commit**
 
@@ -333,7 +365,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
 FIRMWARE_BIN="$BUILD_DIR/WLED_0.15.0_ESP8266.bin"
 LITTLEFS_BIN="$BUILD_DIR/littlefs.bin"
-LITTLEFS_OFFSET=0x200000
+LITTLEFS_OFFSET=0x300000
 
 if [[ ! -f "$FIRMWARE_BIN" || ! -f "$LITTLEFS_BIN" ]]; then
   echo "Build artifacts missing. Run ./build-fs.sh first." >&2
@@ -393,48 +425,34 @@ git commit -m "flash.sh: USB-serial port auto-detection"
 
 ---
 
-## Task 7: flash.sh — esptool write_flash + boot verification
+## Task 7: flash.sh — esptool write-flash + IP discovery
 
 **Files:**
 - Modify: `tools/mass-flash/flash.sh`
 
-- [ ] **Step 1: Append flash + verify block**
+- [ ] **Step 1: Append flash + discovery block**
 
 Add at the bottom of `tools/mass-flash/flash.sh`:
 
 ```bash
-echo "Erasing flash..."
-esptool.py --chip esp8266 --port "$PORT" erase_flash
-
 echo "Writing firmware + LittleFS..."
-esptool.py --chip esp8266 --port "$PORT" write_flash \
+esptool --chip esp8266 --port "$PORT" write-flash \
   0x0                "$FIRMWARE_BIN" \
   "$LITTLEFS_OFFSET" "$LITTLEFS_BIN"
 
-echo "Reading boot serial (5s)..."
-python3 -c "
-import serial, sys, time
-with serial.Serial('$PORT', 115200, timeout=5) as s:
-    end = time.time() + 5
-    while time.time() < end:
-        try:
-            line = s.readline().decode('utf-8', errors='replace')
-            if line:
-                sys.stdout.write(line)
-        except Exception:
-            break
-" || true
-
-echo ""
+echo "Reading MAC..."
+mac_output=$(esptool --chip esp8266 --port "$PORT" read-mac 2>&1)
+mac=$(printf '%s\n' "$mac_output" | awk '/^MAC:/ {print $2; exit}')
+echo "MAC: $mac"
 echo "Done. Unplug and insert the next board."
 ```
 
-- [ ] **Step 2: Verify `pyserial` is available**
+- [ ] **Step 2: Verify `esptool` is available**
 
 ```bash
-python3 -c "import serial; print(serial.__version__)"
+esptool version
 ```
-Expected: version string (pyserial is an esptool dependency, so it should already be installed). If missing: `pip3 install pyserial`.
+Expected: version string.
 
 - [ ] **Step 3: Flash one test board**
 
@@ -443,9 +461,9 @@ Plug in one ESP8266, then:
 ./tools/mass-flash/flash.sh
 ```
 Expected output (summarized):
-- `Erasing flash...` → `Chip erase completed successfully`
 - `Writing firmware + LittleFS...` → two write blocks, both end `Hash of data verified.`
-- `Reading boot serial (5s)...` → shows WLED banner / network join
+- `Reading MAC...` → shows the board MAC address
+- IP discovery prints a URL after the board joins Wi-Fi
 - `Done. Unplug and insert the next board.`
 
 - [ ] **Step 4: Verify the flashed device**
@@ -468,117 +486,15 @@ git commit -m "flash.sh: erase, write firmware+fs, verify via serial"
 
 ## Task 8: ~~Discover BG image URL field name~~ (DROPPED)
 
-**Investigation outcome:** In WLED 0.15, the "BG image URL" setting is stored in the browser's `localStorage` (via the `wledUiCfg` key), not on the device. There is no server-side field to bake. The `skin.css` fallback also requires the browser's "Enable custom CSS" toggle (`comp.css` in localStorage) which is also browser-local. Therefore no device-side mechanism to propagate the BG image to all 32 recipients exists in stock WLED 0.15.
+**Investigation outcome:** In WLED 0.15, the "BG image URL" setting is stored in the browser's `localStorage` (via the `wledUiCfg` key), not on the device. There is no server-side field to bake. The `skin.css` fallback also requires the browser's "Enable custom CSS" toggle (`comp.css` in localStorage) which is also browser-local. Therefore no device-side mechanism to propagate the BG image to every recipient exists in stock WLED 0.15.
 
 **Decision:** drop Task 8 and Task 9. The BG image becomes an optional one-time per-browser step, documented in the tool README. The baked device config (boot playlist, LED map, Wi-Fi, presets) is unchanged by this decision.
 
 ---
 
-## ~~Task 8 (original): Discover BG image URL field name~~
+## ~~Task 8/9: Bake BG URL~~ (DROPPED)
 
-**Files:** (no code changes in this task — investigation only)
-
-This is the spec's phase-2 unknown. The current `wled_cfg_experts-live-5-years.json` does not contain the BG URL field because it was set manually via the UI after export. We need to know the exact JSON path.
-
-- [ ] **Step 1: On the already-flashed test board, set the BG URL via web UI**
-
-Navigate to `http://expertslive.local` → **Config → User Interface** → set `BG image URL` to:
-```
-https://github.com/expertslive/5-years-speaker-lamp/blob/main/wled/wled-ui-bg-expertslive.jpg?raw=true
-```
-Save.
-
-- [ ] **Step 2: Export the new config**
-
-**Config → Security & Updates → Backup configuration → Download**.
-Save to `/tmp/cfg-with-bg.json`.
-
-- [ ] **Step 3: Diff against the original**
-
-```bash
-diff <(jq -S . wled/wled_cfg_experts-live-5-years.json) \
-     <(jq -S . /tmp/cfg-with-bg.json)
-```
-Expected: one (or few) added lines showing the BG URL field. Record:
-- The **field path** (e.g. `id.ui_bg` or `if.ui.bg` or similar)
-- The **exact key name** and any nesting
-
-- [ ] **Step 4: Record in the plan**
-
-Add a one-line note to `tools/mass-flash/README.md` under a "Notes" section:
-```
-BG URL field path in WLED 0.15: <path discovered in step 3>
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add tools/mass-flash/README.md
-git commit -m "Document WLED BG URL field path discovered in phase-2 test"
-```
-
----
-
-## Task 9: Bake BG URL into cfg-baked.json
-
-**Files:**
-- Modify: `tools/mass-flash/build-fs.sh`
-
-**Uses the field path discovered in Task 8.** In the template below, `FIELD_PATH` is a placeholder for the jq path expression (e.g. `.id.ui_bg`). Substitute the real path before committing.
-
-- [ ] **Step 1: Extend the jq transformation**
-
-In `tools/mass-flash/build-fs.sh`, replace the existing jq block:
-```bash
-jq --arg psk "$WIFI_PSK" '
-  .nw.ins[0].psk = $psk
-  | .nw.ins[0] |= del(.pskl)
-' "$SOURCE_CFG" > "$BAKED_CFG"
-```
-
-With:
-```bash
-BG_URL="https://github.com/expertslive/5-years-speaker-lamp/blob/main/wled/wled-ui-bg-expertslive.jpg?raw=true"
-
-jq --arg psk "$WIFI_PSK" --arg bg "$BG_URL" '
-  .nw.ins[0].psk = $psk
-  | .nw.ins[0] |= del(.pskl)
-  | FIELD_PATH = $bg
-' "$SOURCE_CFG" > "$BAKED_CFG"
-```
-
-Substitute `FIELD_PATH` with the jq path recorded in Task 8 (e.g. `.id.ui_bg`).
-
-- [ ] **Step 2: Rebuild**
-
-```bash
-./tools/mass-flash/build-fs.sh
-```
-Expected: success.
-
-- [ ] **Step 3: Verify the field is present**
-
-```bash
-jq '<FIELD_PATH>' tools/mass-flash/build/cfg-baked.json
-```
-Substituting the real path (e.g. `.id.ui_bg`). Expected: the full GitHub image URL.
-
-- [ ] **Step 4: Re-flash the test board**
-
-```bash
-./tools/mass-flash/flash.sh
-```
-
-- [ ] **Step 5: Verify the BG image loads automatically**
-
-Open `http://expertslive.local` in a browser. The custom Experts Live background image should appear in the WLED UI without any manual configuration.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add tools/mass-flash/build-fs.sh
-git commit -m "build-fs.sh: bake BG image URL into cfg"
-```
+WLED 0.15 stores the UI background URL in browser `localStorage`, not on the device. The mass-flash image therefore cannot bake this setting. The README documents it as an optional one-time per-browser step instead.
 
 ---
 
@@ -599,7 +515,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
 FIRMWARE_BIN="$BUILD_DIR/WLED_0.15.0_ESP8266.bin"
 LITTLEFS_BIN="$BUILD_DIR/littlefs.bin"
-LITTLEFS_OFFSET=0x200000
+LITTLEFS_OFFSET=0x300000
 
 if [[ ! -f "$FIRMWARE_BIN" || ! -f "$LITTLEFS_BIN" ]]; then
   echo "Build artifacts missing. Run ./build-fs.sh first." >&2
@@ -640,26 +556,14 @@ wait_for_disconnect() {
 flash_one() {
   local port="$1"
   echo "Detected port: $port"
-  echo "Erasing flash..."
-  esptool.py --chip esp8266 --port "$port" erase_flash
   echo "Writing firmware + LittleFS..."
-  esptool.py --chip esp8266 --port "$port" write_flash \
+  esptool --chip esp8266 --port "$port" write-flash \
     0x0               "$FIRMWARE_BIN" \
     "$LITTLEFS_OFFSET" "$LITTLEFS_BIN"
-  echo "Reading boot serial (5s)..."
-  python3 -c "
-import serial, sys, time
-with serial.Serial('$port', 115200, timeout=5) as s:
-    end = time.time() + 5
-    while time.time() < end:
-        try:
-            line = s.readline().decode('utf-8', errors='replace')
-            if line:
-                sys.stdout.write(line)
-        except Exception:
-            break
-" || true
-  echo ""
+  echo "Reading MAC..."
+  mac_output=$(esptool --chip esp8266 --port "$port" read-mac 2>&1)
+  mac=$(printf '%s\n' "$mac_output" | awk '/^MAC:/ {print $2; exit}')
+  echo "MAC: $mac"
   echo "Done."
 }
 
@@ -697,7 +601,7 @@ Expected: flashes the currently plugged-in board (or errors cleanly if none).
 ```
 Expected: prints `Waiting for board to be plugged in...`. Plug in a board — it flashes, then prints `Unplug the board to flash the next one.`. Unplug — script returns to waiting. Ctrl-C to exit.
 
-Do not flash all 32 boards in this step. Just verify the state machine works for 2 boards.
+Do not flash the full batch in this step. Just verify the state machine works for 2 boards.
 
 - [ ] **Step 4: Commit**
 
@@ -718,7 +622,7 @@ git commit -m "flash.sh: loop mode for sequential mass-flash"
 Append to `tools/mass-flash/README.md`:
 
 ```markdown
-## Mass-flashing 32 boards
+## Mass-flashing multiple boards
 
 1. Run `./build-fs.sh` once. Commits any new firmware to the build cache.
 2. Run `./flash.sh --loop`.
@@ -741,12 +645,12 @@ Expected total time: 25–40 minutes.
 **Device boots but doesn't join Wi-Fi:** Verify the required `WLED_*` environment variables were set before building. Rebuild with `./build-fs.sh` if needed.
 ```
 
-- [ ] **Step 2: Flash all 32 boards**
+- [ ] **Step 2: Flash all boards**
 
 ```bash
 ./tools/mass-flash/flash.sh --loop
 ```
-Work through all 32 boards. After each, do a quick smoke check on one representative board mid-run (boot playlist plays, joins Wi-Fi, UI loads with correct BG).
+Work through all boards. After each, do a quick smoke check on one representative board mid-run (boot playlist plays, joins Wi-Fi, UI loads with correct BG).
 
 - [ ] **Step 3: Commit**
 
@@ -763,6 +667,6 @@ git commit -m "Document mass-flash workflow and troubleshooting"
 - [ ] `./flash.sh` (single) flashes one board in under a minute.
 - [ ] `./flash.sh --loop` state machine works across 2+ boards.
 - [ ] Test board: joins the configured Wi-Fi network, plays boot playlist, shows correct UI background without any manual step.
-- [ ] All 32 boards flashed and spot-checked.
+- [ ] All boards flashed and spot-checked.
 - [ ] README documents workflow + troubleshooting.
 - [ ] All intermediate commits pushed (or batched for a single PR — your call).

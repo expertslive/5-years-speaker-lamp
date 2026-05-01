@@ -92,11 +92,29 @@ normalize_mac() {
 # -- IP discovery ------------------------------------------------------------
 
 get_subnet() {
-  # Primary interface IPv4 -> /24 prefix (for example 192.168.1.10 -> 192.168.1)
-  local ip
-  ip=$(ifconfig en0 | awk '/inet / {print $2; exit}')
+  if [[ -n "$SUBNET_OVERRIDE" ]]; then
+    local subnet="$SUBNET_OVERRIDE"
+    subnet="${subnet%/24}"
+    if [[ "$subnet" =~ ^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(\.0)?$ ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+    echo "--subnet must be a /24 prefix like 192.168.1 or 192.168.1.0/24" >&2
+    return 1
+  fi
+
+  local iface ip
+  iface="${IFACE_OVERRIDE:-$(route get default 2>/dev/null | awk '/interface:/ {print $2; exit}')}"
+  if [[ -z "$iface" ]]; then
+    echo "Could not determine default network interface. Pass --iface or --subnet." >&2
+    return 1
+  fi
+  ip=$(ipconfig getifaddr "$iface" 2>/dev/null || true)
   if [[ -z "$ip" ]]; then
-    echo "Could not determine en0 IP for subnet sweep." >&2
+    ip=$(ifconfig "$iface" 2>/dev/null | awk '/inet / {print $2; exit}')
+  fi
+  if [[ -z "$ip" ]]; then
+    echo "Could not determine IPv4 address for $iface. Pass --subnet." >&2
     return 1
   fi
   printf '%s\n' "$ip" | awk -F. '{print $1"."$2"."$3}'
@@ -195,6 +213,34 @@ flash_one() {
 
 MODE="single"
 PORT_OVERRIDE=""
+IFACE_OVERRIDE=""
+SUBNET_OVERRIDE=""
+
+usage() {
+  cat <<EOF
+Usage: $0 [--loop] [--port PATH] [--iface NAME] [--subnet PREFIX]
+
+  (no args)       Flash the single connected board and print its IP.
+  --loop          Continuous mode: flash, print IP, wait for unplug, repeat.
+  --port PATH     Override auto-detect (useful when multiple USB-serials
+                  are plugged in and only one should be flashed).
+  --iface NAME    Network interface to use for IP discovery, e.g. en0.
+                  Defaults to the interface from route get default.
+  --subnet PREFIX /24 subnet for IP discovery, e.g. 192.168.1 or
+                  192.168.1.0/24. Overrides --iface.
+EOF
+}
+
+require_value() {
+  local flag="$1"
+  local value="${2:-}"
+  if [[ -z "$value" || "$value" == --* ]]; then
+    echo "$flag requires a value." >&2
+    usage >&2
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --loop)
@@ -202,22 +248,37 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --port)
+      require_value "$1" "${2:-}"
       PORT_OVERRIDE="$2"
       shift 2
       ;;
     --port=*)
       PORT_OVERRIDE="${1#--port=}"
+      require_value "--port" "$PORT_OVERRIDE"
+      shift
+      ;;
+    --iface)
+      require_value "$1" "${2:-}"
+      IFACE_OVERRIDE="$2"
+      shift 2
+      ;;
+    --iface=*)
+      IFACE_OVERRIDE="${1#--iface=}"
+      require_value "--iface" "$IFACE_OVERRIDE"
+      shift
+      ;;
+    --subnet)
+      require_value "$1" "${2:-}"
+      SUBNET_OVERRIDE="$2"
+      shift 2
+      ;;
+    --subnet=*)
+      SUBNET_OVERRIDE="${1#--subnet=}"
+      require_value "--subnet" "$SUBNET_OVERRIDE"
       shift
       ;;
     -h|--help)
-      cat <<EOF
-Usage: $0 [--loop] [--port PATH]
-
-  (no args)     Flash the single connected board and print its IP.
-  --loop        Continuous mode: flash, print IP, wait for unplug, repeat.
-  --port PATH   Override auto-detect (useful when multiple USB-serials
-                are plugged in and only one should be flashed).
-EOF
+      usage
       exit 0
       ;;
     *)
