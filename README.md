@@ -118,7 +118,7 @@ The cube runs **WLED** — open-source LED control software with a built-in web 
 On your phone, tablet, or computer, open your Wi-Fi settings and connect to:
 
 > **Network name:** `ExpertsLive-5-years`
-> **Password:** *(none — open network)*
+> **Password:** wled1234
 
 ### Step 2 — Open the WLED interface
 
